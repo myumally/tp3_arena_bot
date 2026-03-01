@@ -1,0 +1,12 @@
+[package]
+name = "tp3_arena_bot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tungstenite = "0.26"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+blake3 = "1"
+rand = "0.8"
