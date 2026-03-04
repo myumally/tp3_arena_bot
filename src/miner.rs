@@ -40,6 +40,7 @@ pub struct MineRequest {
     pub target_bits: u8,
 }
 
+#[derive(Clone)]
 pub struct MineRequesttarget {
     pub mine_request: MineRequest,
     pub priority: usize,
@@ -118,31 +119,6 @@ impl MinerPool {
         }
     }
 
-    fn pop_target(&self) -> Option<MineRequesttarget> {
-        // Acces requests queue
-        let mut reqs = self.requests.lock().unwrap();
-        if reqs.is_empty() {
-            return None;
-        }
-    
-        // Extract target
-        let front = reqs.front_mut().unwrap();
-        let target = front.clone();
-
-        // Update 
-        front.remaining_priority = front.remaining_priority.saturating_sub(1);
-        front.start_nonce += 100_000;
-
-        // Refill if needed
-        if front.remaining_priority == 0 {
-            reqs.pop_front();
-            front.remaining_priority = front.priority;
-            reqs.push_back(*front);
-        }
-
-        Some(target)
-    }
-
     pub fn populate(&mut self, n: usize) {
         for _ in 0..n {
             let thread_results_tx = Arc::clone(&self.results_tx);
@@ -157,8 +133,7 @@ impl MinerPool {
                         continue;
                     };
 
-
-                    // Search for nonce 
+                    // Search for nonce
                     let target = target.unwrap();
                     let mine_request = target.mine_request;
                     if let Some(nonce) = pow_search(&mine_request, target.start_nonce, 100_000) {
@@ -179,32 +154,54 @@ impl MinerPool {
         }
     }
 
-
-
-
-
-    pub fn remove_ressource(&self, resource_id: Uuid) {
-        &self.requests.lock()
+    /// Envoie un challenge de minage au pool.
+    pub fn submit(&self, request: MineRequesttarget) {
+        self.requests
+            .lock()
             .unwrap()
-        .retain(|r| r.mine_request.resource_id != resource_id);;
+            .push_back(request);
     }
 
-    /// Envoie un challenge de minage au pool.
-    pub fn submit(&self, request: MineRequest) {
-        match self.requests.send(request) {
-            Err(send_error) => println!("Failed to add Minerequest: {:?}", send_error),
-            Ok(_) => println!("Minerequest added successfully"),
-        };
+    // Supprime une ressource de la pool de minage
+    pub fn remove_ressource(&self, resource_id: Uuid) {
+        &self.requests
+            .lock()
+            .unwrap()
+            .retain(|r| r.mine_request.resource_id != resource_id);
+    }
+
+    fn pop_target(&self) -> Option<MineRequesttarget> {
+        // Acces requests queue
+        let mut reqs = self.requests.lock().unwrap();
+        if reqs.is_empty() {
+            return None;
+        }
+
+        // Extract target
+        let mut front = reqs.pop_front().unwrap();
+        let target = front.clone();
+
+        // Update
+        front.remaining_priority = front.remaining_priority.saturating_sub(1);
+        front.start_nonce += 100_000;
+
+        // Push back
+        if front.remaining_priority == 0 {
+            front.remaining_priority = front.priority;
+            reqs.push_back(front);
+        }else{
+            reqs.push_front(front);
+        }
+
+        Some(target)
     }
 
     /// Tente de récupérer un résultat sans bloquer.
     pub fn try_recv(&self) -> Option<MineResult> {
-        match self.results.try_recv() {
+        let rx = self.results_rx.lock().unwrap();
+        match rx.try_recv() {
             Ok(result) => Some(result),
-            Err(recv_error) => {
-                println!("Failed to receive Mineresult: {:?}", recv_error);
-                None
-            }
+            Err(_) => None,
         }
     }
 }
