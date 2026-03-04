@@ -23,7 +23,7 @@ use protocol::{ClientMsg, ServerMsg};
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const SERVER_URL: &str = "ws://127.0.0.1:4004/ws";
+const SERVER_URL: &str = "wss://conflicts-posing-classifieds-resistance.trycloudflare.com/ws";
 const TEAM_NAME: &str = "mon_equipe";
 const AGENT_NAME: &str = "bot_1";
 const NUM_MINERS: usize = 4;
