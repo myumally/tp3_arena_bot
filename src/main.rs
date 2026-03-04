@@ -23,7 +23,7 @@ use protocol::{ClientMsg, ServerMsg};
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const SERVER_URL: &str = "wss://conflicts-posing-classifieds-resistance.trycloudflare.com/ws";
+const SERVER_URL: &str = "wss://127.0.0.1:4004/ws";
 const TEAM_NAME: &str = "mon_equipe";
 const AGENT_NAME: &str = "bot_1";
 const NUM_MINERS: usize = 4;
@@ -147,5 +147,6 @@ fn read_server_msg(ws: &mut WsStream) -> Option<ServerMsg> {
 /// Sérialise et envoie un message au serveur.
 fn send_client_msg(ws: &mut WsStream, msg: &ClientMsg) {
     let json = serde_json::to_string(msg).expect("sérialisation échouée");
-    ws.send(Message::Text(json.into())).expect("envoi WS échoué");
+    ws.send(Message::Text(json.into()))
+        .expect("envoi WS échoué");
 }

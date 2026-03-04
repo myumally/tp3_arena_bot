@@ -22,11 +22,8 @@
 
 use std::{
     collections::VecDeque,
-    sync::{
-        mpsc::{self, SendError},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle, Thread},
+    sync::{mpsc, Arc, Mutex},
+    thread::{self, JoinHandle},
     time::Duration,
 };
 use uuid::Uuid;
@@ -43,7 +40,7 @@ pub struct MineRequest {
     pub target_bits: u8,
 }
 
-pub struct MineRequestBatch {
+pub struct MineRequesttarget {
     pub mine_request: MineRequest,
     pub priority: usize,
     pub remaining_priority: usize,
@@ -70,7 +67,7 @@ pub struct MineResult {
 pub struct MinerPool {
     results_rx: Arc<Mutex<mpsc::Receiver<MineResult>>>,
     results_tx: Arc<Mutex<mpsc::Sender<MineResult>>>,
-    requests: Arc<Mutex<VecDeque<MineRequestBatch>>>,
+    requests: Arc<Mutex<VecDeque<MineRequesttarget>>>,
     pool: Vec<JoinHandle<()>>,
 }
 
@@ -86,10 +83,10 @@ impl MinerPool {
     ///   - Un seul Receiver existe par channel. Pour le partager entre N threads,
     ///     il faut le wrapper dans Arc<Mutex<Receiver<MineRequest>>>.
     ///   - Chaque thread clone le Arc pour accéder au Receiver.
-    ///   - pow::pow_search() prend un start_nonce et un batch_size.
+    ///   - pow::pow_search() prend un start_nonce et un target_size.
     ///     Utilisez rand::random::<u64>() comme start_nonce pour que chaque
     ///     appel explore une zone différente.
-    ///   - Batch size recommandé : 100_000
+    ///   - target size recommandé : 100_000
     ///
     pub fn new(n: usize) -> Self {
         //
@@ -110,82 +107,86 @@ impl MinerPool {
         let (channel_result_tx, channel_result_rx) = mpsc::channel::<MineResult>();
         let results_tx = Arc::new(Mutex::new(channel_result_tx));
         let results_rx = Arc::new(Mutex::new(channel_result_rx));
-        let requests = Arc::new(Mutex::new(VecDeque::<MineRequestBatch>::new()));
-
-        // Create threads pool
+        let requests = Arc::new(Mutex::new(VecDeque::<MineRequesttarget>::new()));
         let mut pool = vec![];
+
+        MinerPool {
+            results_rx: results_rx,
+            results_tx: results_tx,
+            requests: requests,
+            pool: pool,
+        }
+    }
+
+    fn pop_target(&self) -> Option<MineRequesttarget> {
+        // Acces requests queue
+        let mut reqs = self.requests.lock().unwrap();
+        if reqs.is_empty() {
+            return None;
+        }
+    
+        // Extract target
+        let front = reqs.front_mut().unwrap();
+        let target = front.clone();
+
+        // Update 
+        front.remaining_priority = front.remaining_priority.saturating_sub(1);
+        front.start_nonce += 100_000;
+
+        // Refill if needed
+        if front.remaining_priority == 0 {
+            reqs.pop_front();
+            front.remaining_priority = front.priority;
+            reqs.push_back(*front);
+        }
+
+        Some(target)
+    }
+
+    pub fn populate(&mut self, n: usize) {
         for _ in 0..n {
-            let thread_results_tx = Arc::clone(&results_tx);
-            let thread_results_rx = Arc::clone(&results_rx);
-            let thread_requests = Arc::clone(&requests);
+            let thread_results_tx = Arc::clone(&self.results_tx);
+            let thread_requests = Arc::clone(&self.requests);
 
-            pool.push(thread::spawn(move || {
+            self.pool.push(thread::spawn(move || {
                 loop {
-                    let target = {
-                        let requests = thread_requests.lock().unwrap();
-
-                        // If empty, wait for more
-                        if requests.len() == 0 {
-                            thread::sleep(Duration::from_millis(100));
-                            continue;
-                        }
-
-                        // Get the element
-                        let mut target = requests.front_mut().unwrap();
-                        target.remaining_priority -= 1;
-                        target.start_nonce += 100_000;
-
-                        // Refill if empty
-                        if target.remaining_priority == 0 {
-                            requests.pop_front();
-                            requests.push_back(*target);
-                        }
-
-                        target
+                    // Get target, or wait
+                    let target = self.pop_target();
+                    if target.is_none() {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
                     };
 
-                    let MineRequest {
-                        seed,
-                        tick,
-                        resource_id,
-                        agent_id,
-                        target_bits,
-                    } = target.mine_request;
 
-                    // If we find an hash
-                    if let Some(nonce) = pow_search(
-                        &seed,
-                        tick,
-                        resource_id,
-                        agent_id,
-                        target_bits,
-                        target.start_nonce,
-                        100_000,
-                    ){
-                        // Add it to results
-                        thread_results_tx.lock().unwrap().send(MineResult {tick, resource_id, nonce}).unwrap();
+                    // Search for nonce 
+                    let target = target.unwrap();
+                    let mine_request = target.mine_request;
+                    if let Some(nonce) = pow_search(&mine_request, target.start_nonce, 100_000) {
+                        thread_results_tx
+                            .lock()
+                            .unwrap()
+                            .send(MineResult {
+                                tick: mine_request.tick,
+                                resource_id: mine_request.resource_id,
+                                nonce,
+                            })
+                            .unwrap();
 
-                        // Iterate on queue to delete if same id
-                        let mut requests = thread_requests.lock().unwrap(); 
-                        for i in 0..requests.len() {
-                            if requests.get(i).unwrap().mine_request.resource_id == target.mine_request.resource_id {
-                                requests.remove(i);
-                                break;
-                            }
-                        }
+                        self.remove_ressource(mine_request.resource_id);
                     }
-                    
                 }
             }));
         }
+    }
 
-        MinerPool {
-            requests: channel_request_tx,
-            results: channel_result_rx,
-            requests_rx: requests_rx,
-            results_tx: results_tx,
-            pool: pool,
-        }
+
+
+
+
+    pub fn remove_ressource(&self, resource_id: Uuid) {
+        &self.requests.lock()
+            .unwrap()
+        .retain(|r| r.mine_request.resource_id != resource_id);;
     }
 
     /// Envoie un challenge de minage au pool.

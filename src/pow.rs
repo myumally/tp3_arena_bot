@@ -1,19 +1,20 @@
 use uuid::Uuid;
 
+use crate::miner::MineRequest;
+
 /// Vérifie qu'un nonce produit un hash avec au moins `target_bits` bits de tête à zéro.
 ///
 /// Le hash est calculé avec blake3 sur la concaténation :
 ///   seed ‖ tick (LE) ‖ resource_id (bytes) ‖ agent_id (bytes) ‖ nonce (LE)
-pub fn pow_valid(
-    seed: &str,
-    tick: u64,
-    resource_id: Uuid,
-    agent_id: Uuid,
-    nonce: u64,
-    target_bits: u8,
-) -> bool {
-    let hash = pow_hash(seed, tick, resource_id, agent_id, nonce);
-    leading_zero_bits(&hash) >= target_bits
+pub fn pow_valid(mine_request: &MineRequest, nonce: u64) -> bool {
+    let hash = pow_hash(
+        &mine_request.seed,
+        mine_request.tick,
+        mine_request.resource_id,
+        mine_request.agent_id,
+        nonce,
+    );
+    leading_zero_bits(&hash) >= mine_request.target_bits
 }
 
 /// Cherche un nonce valide par force brute en partant de `start_nonce`.
@@ -23,17 +24,9 @@ pub fn pow_valid(
 ///
 /// Astuce : chaque thread mineur appelle cette fonction avec un `start_nonce` différent
 /// pour paralléliser la recherche.
-pub fn pow_search(
-    seed: &str,
-    tick: u64,
-    resource_id: Uuid,
-    agent_id: Uuid,
-    target_bits: u8,
-    start_nonce: u64,
-    batch_size: u64,
-) -> Option<u64> {
+pub fn pow_search(request: &MineRequest, start_nonce: u64, batch_size: u64) -> Option<u64> {
     for nonce in start_nonce..start_nonce.saturating_add(batch_size) {
-        if pow_valid(seed, tick, resource_id, agent_id, nonce, target_bits) {
+        if pow_valid(request, nonce) {
             return Some(nonce);
         }
     }
@@ -69,24 +62,29 @@ mod tests {
 
     #[test]
     fn test_pow_search_finds_valid_nonce() {
-        let seed = "test_seed";
-        let tick = 42;
-        let resource_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let target_bits = 4; // facile pour un test
+        let mine_request = MineRequest {
+            seed: "test_seed".to_owned(),
+            tick: 42,
+            resource_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            target_bits: 4, // facile pour un test
+        };
 
-        let nonce = pow_search(seed, tick, resource_id, agent_id, target_bits, 0, 100_000)
+        let nonce = pow_search(&mine_request, 0, 100_000)
             .expect("devrait trouver un nonce avec 4 bits en < 100k essais");
-        assert!(pow_valid(seed, tick, resource_id, agent_id, nonce, target_bits));
+        assert!(pow_valid(&mine_request, nonce,));
     }
 
     #[test]
     fn test_pow_valid_rejects_bad_nonce() {
-        let seed = "test_seed";
-        let tick = 1;
-        let resource_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
+        let mine_request = MineRequest {
+            seed: "test_seed".to_owned(),
+            tick: 42,
+            resource_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            target_bits: 32,
+        };
         // 32 bits de zéro : extrêmement improbable pour nonce = 0
-        assert!(!pow_valid(seed, tick, resource_id, agent_id, 0, 32));
+        assert!(!pow_valid(&mine_request, 0));
     }
 }
