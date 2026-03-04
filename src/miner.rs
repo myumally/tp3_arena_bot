@@ -72,6 +72,40 @@ pub struct MinerPool {
     pool: Vec<JoinHandle<()>>,
 }
 
+// Supprime une ressource de la pool de minage
+pub fn remove_ressource(requests: &Arc<Mutex<VecDeque<MineRequesttarget>>>, resource_id: Uuid) {
+    requests
+        .lock()
+        .unwrap()
+        .retain(|r| r.mine_request.resource_id != resource_id);
+}
+
+fn pop_target(requests: &Arc<Mutex<VecDeque<MineRequesttarget>>>) -> Option<MineRequesttarget> {
+    // Acces requests queue
+    let mut reqs = requests.lock().unwrap();
+    if reqs.is_empty() {
+        return None;
+    }
+
+    // Extract target
+    let mut front = reqs.pop_front().unwrap();
+    let target = front.clone();
+
+    // Update
+    front.remaining_priority = front.remaining_priority.saturating_sub(1);
+    front.start_nonce += 100_000;
+
+    // Push back
+    if front.remaining_priority == 0 {
+        front.remaining_priority = front.priority;
+        reqs.push_back(front);
+    } else {
+        reqs.push_front(front);
+    }
+
+    Some(target)
+}
+
 impl MinerPool {
     /// Crée un pool de `n` threads mineurs.
     ///
@@ -120,14 +154,15 @@ impl MinerPool {
     }
 
     pub fn populate(&mut self, n: usize) {
+        let requests = Arc::clone(&self.requests);
+        let results_tx = Arc::clone(&self.results_tx);
         for _ in 0..n {
-            let thread_results_tx = Arc::clone(&self.results_tx);
-            let thread_requests = Arc::clone(&self.requests);
-
+            let requests = Arc::clone(&requests);
+            let results_tx = Arc::clone(&results_tx);
             self.pool.push(thread::spawn(move || {
                 loop {
                     // Get target, or wait
-                    let target = self.pop_target();
+                    let target = pop_target(&requests);
                     if target.is_none() {
                         thread::sleep(Duration::from_millis(10));
                         continue;
@@ -137,17 +172,16 @@ impl MinerPool {
                     let target = target.unwrap();
                     let mine_request = target.mine_request;
                     if let Some(nonce) = pow_search(&mine_request, target.start_nonce, 100_000) {
-                        thread_results_tx
-                            .lock()
-                            .unwrap()
-                            .send(MineResult {
+                        if let Ok(tx) = results_tx.lock() {
+                            if let Err(e) = tx.send(MineResult {
                                 tick: mine_request.tick,
                                 resource_id: mine_request.resource_id,
                                 nonce,
-                            })
-                            .unwrap();
-
-                        self.remove_ressource(mine_request.resource_id);
+                            }) {
+                                eprintln!("Error sending MineResult: {}", e);
+                            }
+                        }
+                        remove_ressource(&requests, mine_request.resource_id);
                     }
                 }
             }));
@@ -156,44 +190,7 @@ impl MinerPool {
 
     /// Envoie un challenge de minage au pool.
     pub fn submit(&self, request: MineRequesttarget) {
-        self.requests
-            .lock()
-            .unwrap()
-            .push_back(request);
-    }
-
-    // Supprime une ressource de la pool de minage
-    pub fn remove_ressource(&self, resource_id: Uuid) {
-        &self.requests
-            .lock()
-            .unwrap()
-            .retain(|r| r.mine_request.resource_id != resource_id);
-    }
-
-    fn pop_target(&self) -> Option<MineRequesttarget> {
-        // Acces requests queue
-        let mut reqs = self.requests.lock().unwrap();
-        if reqs.is_empty() {
-            return None;
-        }
-
-        // Extract target
-        let mut front = reqs.pop_front().unwrap();
-        let target = front.clone();
-
-        // Update
-        front.remaining_priority = front.remaining_priority.saturating_sub(1);
-        front.start_nonce += 100_000;
-
-        // Push back
-        if front.remaining_priority == 0 {
-            front.remaining_priority = front.priority;
-            reqs.push_back(front);
-        }else{
-            reqs.push_front(front);
-        }
-
-        Some(target)
+        self.requests.lock().unwrap().push_back(request);
     }
 
     /// Tente de récupérer un résultat sans bloquer.
