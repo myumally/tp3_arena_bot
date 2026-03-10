@@ -8,6 +8,7 @@ mod state;
 mod strategy;
 
 // Ces imports seront utilisés dans votre implémentation.
+use std::io::ErrorKind;
 #[allow(unused_imports)]
 use std::sync::{Arc, Mutex};
 #[allow(unused_imports)]
@@ -15,17 +16,21 @@ use std::thread;
 #[allow(unused_imports)]
 use std::time::Duration;
 
+use tungstenite::stream::MaybeTlsStream;
+
 use tungstenite::{connect, Message};
 #[allow(unused_imports)]
 use uuid::Uuid;
 
 use protocol::{ClientMsg, ServerMsg};
 
-use crate::state::GameState;
+use crate::miner::{MineRequest, MineRequestTarget};
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const SERVER_URL: &str = "wss://127.0.0.1:4004/ws";
+// const SERVER_URL: &str = "wss://127.0.0.1:4004/ws";
+// const SERVER_URL: &str = "ws://127.0.0.1:4000/ws";
+const SERVER_URL: &str = "ws://127.0.0.1:4004/ws";
 const TEAM_NAME: &str = "mon_equipe";
 const AGENT_NAME: &str = "bot_1";
 const NUM_MINERS: usize = 4;
@@ -93,64 +98,74 @@ fn main() {
     //  depuis le thread lecteur.
     // ─────────────────────────────────────────────────────────────────────
 
-    // FAIT: Partie 1 — Créer le SharedState (voir state.rs)
-    let shared_state = state::SharedState::new(Mutex::new(GameState::new(agent_id)));
+    #[allow(unused_variables)]
+    let shared_state = state::new_shared_state(agent_id);
+    let mut miner_pool = miner::MinerPool::new();
+    miner_pool.populate(NUM_MINERS);
 
-    // FAIT: Partie 2 — Créer le MinerPool (voir miner.rs)
-    let miner_pool = miner::MinerPool::new(NUM_MINERS);
+    // Configurer un timeout de lecture pour éviter le blocage (ws:// sans TLS)
+    if let MaybeTlsStream::Plain(ref mut tcp) = *ws.get_mut() {
+        tcp.set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("set_read_timeout");
+    }
 
     // TODO: Partie 3 — Créer la stratégie (voir strategy.rs)
 
-    // TODO: Partie 4 — Lancer le thread lecteur WS
-    let (tx, rx) = std::sync::mpsc::channel::<ServerMsg>();
-
-    
-    // Indice : il faut un channel pour recevoir les messages du thread lecteur
-    // car la WebSocket ne peut pas être partagée entre threads.
-    //
-    // let (tx, rx) = std::sync::mpsc::channel::<ServerMsg>();
-    //
-    // Le thread lecteur lit les messages, met à jour le state, et forward
-    // les messages importants via le channel.
-
     // TODO: Partie 5 — Boucle principale
     loop {
-        // 1. Lire les messages du thread lecteur (rx.try_recv())
+        // 1. Lire les messages du serveur (décodés par read_server_msg)
+        //    - State, PowResult → met à jour le SharedState (avec affichage dans state.rs)
         //    - PowChallenge → envoyer au MinerPool
         //    - Win → afficher et quitter
-        //    - Autres → déjà traités par le thread lecteur
-        let msg = rx.try_recv();
-        match msg {
-            Ok(msg) => {
-                match msg {
-                    ServerMsg::PowChallenge { tick, seed, resource_id, x, y, target_bits, expires_at, value } => {
-                        miner_pool.submit(MineRequest { tick, seed, resource_id, x, y, target_bits, expires_at, value });
-                    }
-                    ServerMsg::Win { team } => {
-                        println!("[!] Win reçu : {team}");
-                        break;
-                    }
-                    _ => {
-                        continue;
-                    }
+        let msg = read_server_msg(&mut ws);
+        if let Some(msg) = msg {
+            // Mettre à jour l'état partagé (State, PowResult) — affichage dans state.rs
+            shared_state.lock().unwrap().update(&msg);
+
+            match msg {
+                ServerMsg::PowChallenge {
+                    tick,
+                    seed,
+                    resource_id,
+                    x: _,
+                    y: _,
+                    target_bits,
+                    expires_at: _,
+                    value: _,
+                } => {
+                    let mine_request: MineRequest = MineRequest {
+                        tick,
+                        seed,
+                        resource_id,
+                        target_bits,
+                        agent_id,
+                    };
+                    miner_pool.submit(MineRequestTarget {
+                        mine_request: mine_request,
+                        priority: 1,
+                        remaining_priority: 1,
+                        start_nonce: 0,
+                    });
                 }
-            }
-            Err(_) => {
-                continue;
+                ServerMsg::Win { team } => {
+                    println!("[!] Win reçu : {team}");
+                    break;
+                }
+                _ => {}
             }
         }
-    
+
         // 2. Vérifier si le MinerPool a trouvé un nonce
         //    → envoyer ClientMsg::PowSubmit
-    
+
         // 3. Consulter la stratégie pour le prochain mouvement
         //    → envoyer ClientMsg::Move
-    
+
         // 4. Dormir un peu
         thread::sleep(Duration::from_millis(50));
     }
 
-    println!("[!] TODO: implémenter la boucle principale");
+    println!("[*] Boucle principale terminée.");
 }
 
 // ─── Fonctions utilitaires (fournies) ───────────────────────────────────────
@@ -158,12 +173,17 @@ fn main() {
 type WsStream = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
 /// Lit un message du serveur et le désérialise.
+/// Retourne `None` en cas de timeout (lecture non bloquante) — sans log.
 fn read_server_msg(ws: &mut WsStream) -> Option<ServerMsg> {
     match ws.read() {
         Ok(Message::Text(text)) => serde_json::from_str(&text).ok(),
         Ok(_) => None,
         Err(e) => {
-            eprintln!("[!] Erreur WS lecture : {e}");
+            // Ne pas afficher pour timeout/would_block (polling normal)
+            let is_timeout = matches!(&e, tungstenite::Error::Io(io) if io.kind() == ErrorKind::TimedOut || io.kind() == ErrorKind::WouldBlock);
+            if !is_timeout {
+                eprintln!("[!] Erreur WS lecture : {e}");
+            }
             None
         }
     }

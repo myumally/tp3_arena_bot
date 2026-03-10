@@ -53,15 +53,15 @@ pub struct AgentInfo {
 //   - team_scores: HashMap<String, u32>
 //
 pub struct GameState {
-    agent_id: Uuid,
-    tick: u64,
-    position: (u16, u16),
-    map_size: (u16, u16),
-    goal: u32,
-    obstacles: Vec<(u16, u16)>,
-    resources: Vec<ResourceInfo>,
-    agents: Vec<AgentInfo>,
-    team_scores: HashMap<String, u32>
+    pub agent_id: Uuid,
+    pub tick: u64,
+    pub position: (u16, u16),
+    pub map_size: (u16, u16),
+    pub goal: u32,
+    pub obstacles: Vec<(u16, u16)>,
+    pub resources: Vec<ResourceInfo>,
+    pub agents: Vec<AgentInfo>,
+    pub team_scores: HashMap<String, u32>
 }
 
 // TODO: Implémenter GameState.
@@ -96,32 +96,46 @@ impl GameState {
                 self.tick = tick;
                 self.map_size = (width, height);
                 self.goal = goal;
-                self.obstacles = obstacles;
-                for resource in resources {
-                    self.resources.push(ResourceInfo{
-                        resource_id: resource.0,
-                        x: resource.1, 
-                        y:resource.2, 
-                        expires_at: resource.3,
-                        value: resource.4}
-                    );
+                self.obstacles = obstacles.clone();
+                self.resources = resources
+                    .into_iter()
+                    .map(|r| ResourceInfo {
+                        resource_id: r.0,
+                        x: r.1,
+                        y: r.2,
+                        expires_at: r.3,
+                        value: r.4,
+                    })
+                    .collect();
+                self.agents = agents
+                    .iter()
+                    .filter(|a| a.0 != self.agent_id)
+                    .map(|a| AgentInfo {
+                        id: a.0,
+                        name: a.1.clone(),
+                        team: a.2.clone(),
+                        score: a.3,
+                        x: a.4,
+                        y: a.5,
+                    })
+                    .collect();
+                if let Some(me) = agents.iter().find(|a| a.0 == self.agent_id) {
+                    self.position = (me.4, me.5);
                 }
-                for agent in agents {
-                    if agent.0 == self.agent_id {
-                        self.position = (agent.4, agent.5);
-                    } else {
-                        self.agents.push(AgentInfo { 
-                            id: agent.0, 
-                            name: agent.1, 
-                            team: agent.2, 
-                            score: agent.3, 
-                            x: agent.4, 
-                            y: agent.5 }
-                        );
-                    }
-                }
+                println!(
+                    "[state] State tick={} pos=({},{}) map={}x{} resources={} agents={}",
+                    self.tick,
+                    self.position.0,
+                    self.position.1,
+                    self.map_size.0,
+                    self.map_size.1,
+                    self.resources.len(),
+                    self.agents.len()
+                );
             } 
             ServerMsg::PowResult { resource_id, winner } => {
+                self.resources.retain(|r| r.resource_id != resource_id);
+                println!("[state] PowResult resource={} winner={}", resource_id, winner);
             }  
             _ => {}
         }      

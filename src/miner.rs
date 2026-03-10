@@ -41,7 +41,7 @@ pub struct MineRequest {
 }
 
 #[derive(Clone)]
-pub struct MineRequesttarget {
+pub struct MineRequestTarget {
     pub mine_request: MineRequest,
     pub priority: usize,
     pub remaining_priority: usize,
@@ -68,19 +68,19 @@ pub struct MineResult {
 pub struct MinerPool {
     results_rx: Arc<Mutex<mpsc::Receiver<MineResult>>>,
     results_tx: Arc<Mutex<mpsc::Sender<MineResult>>>,
-    requests: Arc<Mutex<VecDeque<MineRequesttarget>>>,
+    requests: Arc<Mutex<VecDeque<MineRequestTarget>>>,
     pool: Vec<JoinHandle<()>>,
 }
 
 // Supprime une ressource de la pool de minage
-pub fn remove_ressource(requests: &Arc<Mutex<VecDeque<MineRequesttarget>>>, resource_id: Uuid) {
+pub fn remove_ressource(requests: &Arc<Mutex<VecDeque<MineRequestTarget>>>, resource_id: Uuid) {
     requests
         .lock()
         .unwrap()
         .retain(|r| r.mine_request.resource_id != resource_id);
 }
 
-fn pop_target(requests: &Arc<Mutex<VecDeque<MineRequesttarget>>>) -> Option<MineRequesttarget> {
+fn pop_target(requests: &Arc<Mutex<VecDeque<MineRequestTarget>>>) -> Option<MineRequestTarget> {
     // Acces requests queue
     let mut reqs = requests.lock().unwrap();
     if reqs.is_empty() {
@@ -123,7 +123,7 @@ impl MinerPool {
     ///     appel explore une zone différente.
     ///   - target size recommandé : 100_000
     ///
-    pub fn new(n: usize) -> Self {
+    pub fn new() -> Self {
         //
         // Créer les 2 channels :
         //   - (request_tx, request_rx) pour envoyer les challenges
@@ -142,8 +142,8 @@ impl MinerPool {
         let (channel_result_tx, channel_result_rx) = mpsc::channel::<MineResult>();
         let results_tx = Arc::new(Mutex::new(channel_result_tx));
         let results_rx = Arc::new(Mutex::new(channel_result_rx));
-        let requests = Arc::new(Mutex::new(VecDeque::<MineRequesttarget>::new()));
-        let mut pool = vec![];
+        let requests = Arc::new(Mutex::new(VecDeque::<MineRequestTarget>::new()));
+        let pool = vec![];
 
         MinerPool {
             results_rx: results_rx,
@@ -189,7 +189,7 @@ impl MinerPool {
     }
 
     /// Envoie un challenge de minage au pool.
-    pub fn submit(&self, request: MineRequesttarget) {
+    pub fn submit(&self, request: MineRequestTarget) {
         self.requests.lock().unwrap().push_back(request);
     }
 
