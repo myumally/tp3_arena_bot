@@ -129,7 +129,7 @@ impl GameState {
 }
 
 
-// TODO: Définir le type alias SharedState.
+// FAIT: Définir le type alias SharedState.
 //
 // C'est un Arc<Mutex<GameState>> pour pouvoir le partager entre threads.
 //

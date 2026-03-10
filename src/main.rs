@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 use protocol::{ClientMsg, ServerMsg};
 
+use crate::state::GameState;
+
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 const SERVER_URL: &str = "wss://127.0.0.1:4004/ws";
@@ -91,14 +93,18 @@ fn main() {
     //  depuis le thread lecteur.
     // ─────────────────────────────────────────────────────────────────────
 
-    // TODO: Partie 1 — Créer le SharedState (voir state.rs)
+    // FAIT: Partie 1 — Créer le SharedState (voir state.rs)
+    let shared_state = state::SharedState::new(Mutex::new(GameState::new(agent_id)));
 
-    // TODO: Partie 2 — Créer le MinerPool (voir miner.rs)
+    // FAIT: Partie 2 — Créer le MinerPool (voir miner.rs)
+    let miner_pool = miner::MinerPool::new(NUM_MINERS);
 
     // TODO: Partie 3 — Créer la stratégie (voir strategy.rs)
 
     // TODO: Partie 4 — Lancer le thread lecteur WS
-    //
+    let (tx, rx) = std::sync::mpsc::channel::<ServerMsg>();
+
+    
     // Indice : il faut un channel pour recevoir les messages du thread lecteur
     // car la WebSocket ne peut pas être partagée entre threads.
     //
@@ -108,22 +114,41 @@ fn main() {
     // les messages importants via le channel.
 
     // TODO: Partie 5 — Boucle principale
-    //
-    // loop {
-    //     // 1. Lire les messages du thread lecteur (rx.try_recv())
-    //     //    - PowChallenge → envoyer au MinerPool
-    //     //    - Win → afficher et quitter
-    //     //    - Autres → déjà traités par le thread lecteur
-    //
-    //     // 2. Vérifier si le MinerPool a trouvé un nonce
-    //     //    → envoyer ClientMsg::PowSubmit
-    //
-    //     // 3. Consulter la stratégie pour le prochain mouvement
-    //     //    → envoyer ClientMsg::Move
-    //
-    //     // 4. Dormir un peu
-    //     thread::sleep(Duration::from_millis(50));
-    // }
+    loop {
+        // 1. Lire les messages du thread lecteur (rx.try_recv())
+        //    - PowChallenge → envoyer au MinerPool
+        //    - Win → afficher et quitter
+        //    - Autres → déjà traités par le thread lecteur
+        let msg = rx.try_recv();
+        match msg {
+            Ok(msg) => {
+                match msg {
+                    ServerMsg::PowChallenge { tick, seed, resource_id, x, y, target_bits, expires_at, value } => {
+                        miner_pool.submit(MineRequest { tick, seed, resource_id, x, y, target_bits, expires_at, value });
+                    }
+                    ServerMsg::Win { team } => {
+                        println!("[!] Win reçu : {team}");
+                        break;
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
+            }
+            Err(_) => {
+                continue;
+            }
+        }
+    
+        // 2. Vérifier si le MinerPool a trouvé un nonce
+        //    → envoyer ClientMsg::PowSubmit
+    
+        // 3. Consulter la stratégie pour le prochain mouvement
+        //    → envoyer ClientMsg::Move
+    
+        // 4. Dormir un peu
+        thread::sleep(Duration::from_millis(50));
+    }
 
     println!("[!] TODO: implémenter la boucle principale");
 }

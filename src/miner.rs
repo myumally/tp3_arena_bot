@@ -201,4 +201,8 @@ impl MinerPool {
             Err(_) => None,
         }
     }
+
+    pub fn remove_ressource(&self, resource_id: Uuid){
+        remove_ressource(&self.requests, resource_id);
+    }
 }
