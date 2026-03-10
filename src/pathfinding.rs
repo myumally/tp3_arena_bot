@@ -101,7 +101,7 @@ pub fn bfs_distance_grid(
     (distances, None)
 }
 
-pub fn find_closest_resource(state: &GameState) -> Option<((i32, i32), Uuid)> {
+pub fn find_closest_resource(state: &GameState) -> Option<(u16, u16, Uuid)> {
     // Calculate distances
     let (_distances, some_ressource) =
         bfs_distance_grid(state, state.position.0, state.position.1, true);
@@ -117,8 +117,12 @@ pub fn find_closest_resource(state: &GameState) -> Option<((i32, i32), Uuid)> {
         .unwrap()
         .resource_id;
 
-    // Run BFS from ressource and take direction reducing distance
-    let (dist, _) = bfs_distance_grid(state, best_resource.0, best_resource.1, false);
+    // Return best move and resource uuid
+    Some((best_resource.0, best_resource.1, best_resource_uuid))
+}
+
+pub fn find_direction_towards(state: &GameState, x: u16, y: u16) -> Option<(i32, i32)> {
+    let (dist, _) = bfs_distance_grid(state, x, y, false);
     let mut best_dist = dist[state.position.1 as usize][state.position.0 as usize];
     let mut best_move: Option<(i32, i32)> = None;
 
@@ -135,11 +139,5 @@ pub fn find_closest_resource(state: &GameState) -> Option<((i32, i32), Uuid)> {
         }
     }
 
-    if best_move.is_none() {
-        println!("Warning: Best ressource is accessible but can't find direction to the ressource");
-        return None;
-    }
-
-    // Return best move and resource uuid
-    Some((best_move.unwrap(), best_resource_uuid))
+    best_move
 }
