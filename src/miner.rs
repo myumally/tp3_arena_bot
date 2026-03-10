@@ -27,7 +27,7 @@ use uuid::Uuid;
 const BATCH_SIZE: u64 = 100_000;
 
 use crate::pow::pow_search;
-use crate::protocol::PowChallenge;
+use crate::protocol::PowChallengeStruct;
 
 /// Requête de minage envoyée aux threads mineurs.
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ fn send_result(
 ) {
     let resource_id = result.resource_id;
     if let Ok(tx) = results_tx.lock() {
-        if let Err(e) = tx.send(result) {
+        if let Err(e) = tx.send(result.clone()) {
             eprintln!("Error sending MineResult: {}", e);
         }
     }
@@ -85,14 +85,12 @@ fn send_result(
     if let Some(ref target) = *guard {
         if target.mine_request.resource_id == resource_id {
             *guard = None;
+            println!("Result sent to the pool: {:?}, set target to None", result);
         }
     }
 }
 
-fn remove_ressource(
-    target_arc: &Arc<Mutex<Option<MineRequestTarget>>>,
-    resource_id: Uuid,
-) {
+fn remove_ressource(target_arc: &Arc<Mutex<Option<MineRequestTarget>>>, resource_id: Uuid) {
     let mut guard = target_arc.lock().unwrap();
     if let Some(ref target) = *guard {
         if target.mine_request.resource_id == resource_id {
@@ -199,7 +197,7 @@ impl MinerPool {
     }
 
     /// Envoie un challenge de minage au pool.
-    pub fn submit(&self, challenge: PowChallenge, agent_id: Uuid) {
+    pub fn submit(&self, challenge: PowChallengeStruct, agent_id: Uuid) {
         let mut guard = self.target_arc.lock().unwrap();
         if let Some(ref target) = *guard {
             if target.mine_request.resource_id == challenge.resource_id {

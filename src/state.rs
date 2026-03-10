@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 #[allow(unused_imports)]
 use uuid::Uuid;
 
-use crate::protocol::PowChallenge;
+use crate::protocol::PowChallengeStruct;
 #[allow(unused_imports)]
 use crate::protocol::ServerMsg;
 
@@ -63,7 +63,7 @@ pub struct GameState {
     pub resources: Vec<ResourceInfo>,
     pub agents: Vec<AgentInfo>,
     pub team_scores: HashMap<String, u32>,
-    pub pow_challenge: Vec<PowChallenge>,
+    pub pow_challenge: Vec<PowChallengeStruct>,
 }
 
 // TODO: Implémenter GameState.
@@ -172,10 +172,35 @@ impl GameState {
             }
 
             // PowChallenge
-            ServerMsg::PowChallenge(challenge) => {
+            ServerMsg::PowChallenge {
+                tick,
+                seed,
+                resource_id,
+                x,
+                y,
+                target_bits,
+                expires_at,
+                value,
+            } => {
+                let challenge = PowChallengeStruct {
+                    tick,
+                    seed,
+                    resource_id,
+                    x,
+                    y,
+                    target_bits,
+                    expires_at,
+                    value,
+                };
+                println!(
+                    "[state] PowChallenge resource={} challenge={}",
+                    challenge.resource_id, challenge.tick
+                );
                 self.pow_challenge.push(challenge.clone());
             }
-            _ => {}
+            _ => {
+                println!("[state] Unexpected message: {:?}", msg);
+            }
         }
     }
 }

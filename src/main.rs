@@ -62,11 +62,11 @@ use uuid::Uuid;
 use pathfinding::{find_closest_resource, find_direction_towards};
 use protocol::{ClientMsg, ServerMsg};
 
-use crate::miner::MineResult;
+use crate::pathfinding::manhattan;
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-const SERVER_URL: &str = "ws://127.0.0.1:4004/ws";
-const TEAM_NAME: &str = "mon_equipe";
+const SERVER_URL: &str = "wss://frequently-doubt-structural-removing.trycloudflare.com/ws";
+const TEAM_NAME: &str = "dom_lmx";
 const AGENT_NAME: &str = "bot_1";
 const NUM_MINERS: usize = 4;
 
@@ -105,12 +105,16 @@ fn main() {
         tcp.set_read_timeout(Some(Duration::from_millis(50)))
             .expect("set_read_timeout");
     }
-    let mut target: Option<miner::MineResult> = None;
+    let mut target_mine: Option<miner::MineResult> = None;
 
     // ─── Boucle principale ──────────────────────────────────────────────────
     loop {
+        // println!("\tBoucle principale");
         // On lit les messages du serveur
         let msg = read_server_msg(&mut ws);
+
+        println!("Message reçu: {:?}", msg);
+
         if let Some(msg) = msg {
             shared_state.lock().unwrap().update(&msg);
 
@@ -121,16 +125,22 @@ fn main() {
         }
         let state = shared_state.lock().unwrap();
 
-        // On vérifi que le terrain est bien initialisé
+        // On vérifie que le terrain est bien initialisé
         if state.map_size == (0, 0) {
             continue;
         }
 
-        // ─── Si résultat trouvé ──────────────────────────────────────────────────
-        if target.is_none() {
-            target = miner_pool.try_recv();
-        }
-        if let Some(result) = target.clone() {
+        println!(
+            "\tNombre de challenges disponibles: {:?}",
+            state.pow_challenge.len()
+        );
+
+        // ─── Objectifs ──────────────────────────────────────────────────
+        target_mine = target_mine.or_else(|| miner_pool.try_recv());
+        let mut target_move: Option<(u16, u16)> = None;
+
+        // Si résultat de minage
+        if let Some(result) = target_mine.clone() {
             // On récupère ses coordonnées
             let resource_pos = state
                 .pow_challenge
@@ -147,62 +157,77 @@ fn main() {
 
             // On se déplace si elle existe
             if let Some((rx, ry)) = resource_pos {
-                let manhattan = (state.position.0 as i32 - rx as i32).abs()
-                    + (state.position.1 as i32 - ry as i32).abs();
-                if manhattan == 1 {
-                    send_client_msg(
-                        &mut ws,
-                        &ClientMsg::PowSubmit {
-                            tick: result.tick,
-                            resource_id: result.resource_id,
-                            nonce: result.nonce,
-                        },
-                    );
-                } else if let Some((dx, dy)) = find_direction_towards(&state, rx, ry) {
-                    send_client_msg(
-                        &mut ws,
-                        &ClientMsg::Move {
-                            dx: dx as i8,
-                            dy: dy as i8,
-                        },
-                    );
-                }
+                println!("\tJe me dépalce vers la solution  {:?}", result.resource_id);
+                target_move = Some((rx, ry));
 
-            // Sinon on remet la target à None
+            // Sinon on remet la target_mine à None
             } else {
-                target = None;
+                println!(
+                    "\tLa ressource minée n'existe plus  {:?}",
+                    result.resource_id
+                );
+                target_mine = None;
             }
-
-        // ─── Si pas de résultat trouvé ──────────────────────────────────────────────────
-        } else {
-            // On se déplace vers la ressource la plus proche
-            if let Some((rx, ry, resource_id)) = find_closest_resource(&state) {
-                // Try to find associated challenge
-                if miner_pool.current_resource_id() != Some(resource_id) {
-                    if let Some(challenge) = state
-                        .pow_challenge
-                        .iter()
-                        .find(|c| c.resource_id == resource_id)
-                    {
-                        miner_pool.submit(challenge.clone(), agent_id);
-                    }
-                }
-
-                // Got to this direction
-                if let Some((dx, dy)) = find_direction_towards(&state, rx, ry) {
-                    send_client_msg(
-                        &mut ws,
-                        &ClientMsg::Move {
-                            dx: dx as i8,
-                            dy: dy as i8,
-                        },
-                    );
-                }
-            }
-
-            thread::sleep(Duration::from_millis(50));
         }
 
+        // Si pas de destination,
+        if target_move.is_none() {
+            // On se déplace vers la ressource la plus proche
+            if let Some((rx, ry, resource_id)) = find_closest_resource(&state) {
+                if let Some(challenge) = state
+                    .pow_challenge
+                    .iter()
+                    .find(|c| c.resource_id == resource_id)
+                {
+                    miner_pool.submit(challenge.clone(), agent_id);
+                    target_move = Some((rx, ry));
+                } else {
+                    println!(
+                        "\tLa ressource {} n'a pas de challenge associé",
+                        resource_id
+                    );
+                }
+            } else {
+                // println!("\tAucune ressource trouvée");
+            }
+        }
+
+        // ─── Déplacements ──────────────────────────────────────────────────
+        if let Some((rx, ry)) = target_move {
+            if let Some((dx, dy)) = find_direction_towards(&state, rx, ry) {
+                send_client_msg(
+                    &mut ws,
+                    &ClientMsg::Move {
+                        dx: dx as i8,
+                        dy: dy as i8,
+                    },
+                );
+            } else {
+                println!("No direction found to target {:?}", target_move);
+            }
+        }
+
+        // ─── Minage ──────────────────────────────────────────────────
+        if let Some(result) = target_mine.clone() {
+            if manhattan(&state.position, &target_move.unwrap()) == 1 {
+                send_client_msg(
+                    &mut ws,
+                    &ClientMsg::PowSubmit {
+                        tick: result.tick,
+                        resource_id: result.resource_id,
+                        nonce: result.nonce,
+                    },
+                );
+            }
+        }
+
+        thread::sleep(Duration::from_millis(50));
+        send_client_msg(
+            &mut ws,
+            &ClientMsg::Heartbeat {
+                tick: state.tick.clone(),
+            },
+        );
         drop(state);
     }
 
@@ -217,25 +242,20 @@ type WsStream = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::
 /// Retourne `None` en cas de timeout (lecture non bloquante) — sans log.
 fn read_server_msg(ws: &mut WsStream) -> Option<ServerMsg> {
     match ws.read() {
-        Ok(Message::Text(text)) => match serde_json::from_str(&text) {
-            Ok(msg) => {
-                println!("Message reçu: {:?}", msg);
-                Some(msg)
-            }
-            Err(e) => {
-                let preview: String = text.chars().take(200).collect();
-                eprintln!(
-                    "[!] Message non décodé : {} — JSON (extrait) : {:?}",
-                    e, preview
-                );
-                None
-            }
-        },
-        Ok(_) => None,
+        Ok(Message::Text(text)) => serde_json::from_str(&text).ok(),
+        Ok(_) => {
+            println!("Unexpected message");
+            None
+        }
         Err(e) => {
             // Ne pas afficher pour timeout/would_block (polling normal)
-            let is_timeout = matches!(&e, tungstenite::Error::Io(io) if io.kind() == ErrorKind::TimedOut || io.kind() == ErrorKind::WouldBlock);
-            if !is_timeout {
+            let is_timeout_or_would_block = matches!(
+                &e,
+                tungstenite::Error::Io(io)
+                    if io.kind() == ErrorKind::TimedOut
+                        || io.kind() == ErrorKind::WouldBlock
+            );
+            if !is_timeout_or_would_block {
                 eprintln!("[!] Erreur WS lecture : {e}");
             }
             None

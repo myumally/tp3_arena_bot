@@ -20,6 +20,10 @@ const RESSOURCE: i32 = i32::MAX - 1;
 /// Voisins en 4-connexité (haut, bas, gauche, droite).
 const NEIGHBORS: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
 
+pub fn manhattan(cell1: &(u16, u16), cell2: &(u16, u16)) -> i32 {
+    (cell1.0 as i32 - cell2.0 as i32).abs() + (cell1.1 as i32 - cell2.1 as i32).abs()
+}
+
 /// Convertit l'état du jeu en grille 100x100 et exécute un BFS depuis le point
 /// de départ pour calculer les distances jusqu'à toutes les cases accessibles.
 ///
@@ -98,13 +102,31 @@ pub fn bfs_distance_grid(
             break;
         }
     }
+
     (distances, None)
+}
+
+pub fn plot_grid(distances: &Vec<Vec<i32>>) {
+    for (_y, row) in distances.iter().enumerate() {
+        for (_x, cell) in row.iter().enumerate() {
+            let c = match *cell {
+                OBSTACLE => '#',
+                RESSOURCE => 'R',
+                INFINITY => '#',
+                d => char::from_digit((d % 10) as u32, 10).unwrap_or('.'),
+            };
+            print!("{}", c);
+        }
+        println!();
+    }
 }
 
 pub fn find_closest_resource(state: &GameState) -> Option<(u16, u16, Uuid)> {
     // Calculate distances
     let (_distances, some_ressource) =
         bfs_distance_grid(state, state.position.0, state.position.1, true);
+
+    // plot_grid(&distances);
 
     if some_ressource.is_none() {
         return None;
@@ -124,6 +146,17 @@ pub fn find_closest_resource(state: &GameState) -> Option<(u16, u16, Uuid)> {
 pub fn find_direction_towards(state: &GameState, x: u16, y: u16) -> Option<(i32, i32)> {
     let (dist, _) = bfs_distance_grid(state, x, y, false);
     let mut best_dist = dist[state.position.1 as usize][state.position.0 as usize];
+
+    if best_dist == INFINITY {
+        println!("No direction found to target {:?}", (x, y));
+        return None;
+    }
+
+    if best_dist == 1 {
+        // Already at target
+        return Some((0, 0));
+    }
+
     let mut best_move: Option<(i32, i32)> = None;
 
     for (dx, dy) in NEIGHBORS {
