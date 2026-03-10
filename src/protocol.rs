@@ -3,6 +3,19 @@ use uuid::Uuid;
 
 // ─── Messages envoyés par le serveur ────────────────────────────────────────
 
+/// Données d'un challenge de minage (trouver un nonce dont le hash a `target_bits` bits de tête à zéro).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PowChallenge {
+    pub tick: u64,
+    pub seed: String,
+    pub resource_id: Uuid,
+    pub x: u16,
+    pub y: u16,
+    pub target_bits: u8,
+    pub expires_at: u64,
+    pub value: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMsg {
@@ -12,17 +25,8 @@ pub enum ServerMsg {
         tick_ms: u64,
     },
 
-    /// Challenge de minage : trouver un nonce dont le hash a `target_bits` bits de tête à zéro.
-    PowChallenge {
-        tick: u64,
-        seed: String,
-        resource_id: Uuid,
-        x: u16,
-        y: u16,
-        target_bits: u8,
-        expires_at: u64,
-        value: u32,
-    },
+    /// Challenge de minage
+    PowChallenge(PowChallenge),
 
     /// Résultat d'un minage : un agent a résolu le challenge.
     PowResult {

@@ -29,6 +29,7 @@ use std::{
 use uuid::Uuid;
 
 use crate::pow::pow_search;
+use crate::protocol::PowChallenge;
 
 /// Requête de minage envoyée aux threads mineurs.
 #[derive(Debug, Clone)]
@@ -189,8 +190,21 @@ impl MinerPool {
     }
 
     /// Envoie un challenge de minage au pool.
-    pub fn submit(&self, request: MineRequestTarget) {
-        self.requests.lock().unwrap().push_back(request);
+    pub fn submit(&self, challenge: PowChallenge, agent_id: Uuid) {
+        println!("Submit challenge: {:?}", challenge);
+        let mine_request = MineRequest {
+            tick: challenge.tick,
+            seed: challenge.seed,
+            resource_id: challenge.resource_id,
+            target_bits: challenge.target_bits,
+            agent_id,
+        };
+        self.requests.lock().unwrap().push_back(MineRequestTarget {
+            mine_request,
+            priority: 1,
+            remaining_priority: 1,
+            start_nonce: 0,
+        });
     }
 
     /// Tente de récupérer un résultat sans bloquer.
@@ -202,7 +216,11 @@ impl MinerPool {
         }
     }
 
-    pub fn remove_ressource(&self, resource_id: Uuid){
+    pub fn remove_ressource(&self, resource_id: Uuid) {
         remove_ressource(&self.requests, resource_id);
+    }
+
+    pub fn clear_requests(&self) {
+        self.requests.lock().unwrap().clear();
     }
 }

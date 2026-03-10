@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 use crate::miner::MineRequest;
+use blake3::Hasher;
 
 /// Vérifie qu'un nonce produit un hash avec au moins `target_bits` bits de tête à zéro.
 ///
@@ -25,8 +26,15 @@ pub fn pow_valid(mine_request: &MineRequest, nonce: u64) -> bool {
 /// Astuce : chaque thread mineur appelle cette fonction avec un `start_nonce` différent
 /// pour paralléliser la recherche.
 pub fn pow_search(request: &MineRequest, start_nonce: u64, batch_size: u64) -> Option<u64> {
+    let mut hash_base = Hasher::new();
+    hash_base.update(&request.seed.as_bytes());
+    hash_base.update(&request.tick.to_le_bytes());
+    hash_base.update(request.resource_id.as_bytes());
+    hash_base.update(request.agent_id.as_bytes());
+
     for nonce in start_nonce..start_nonce.saturating_add(batch_size) {
-        if pow_valid(request, nonce) {
+        let output = hash_base.clone().update(&nonce.to_le_bytes()).finalize();
+        if leading_zero_bits(output.as_bytes()) >= request.target_bits {
             return Some(nonce);
         }
     }

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod miner;
+mod pathfinding;
 mod pow;
 mod protocol;
 mod state;
@@ -23,8 +24,6 @@ use tungstenite::{connect, Message};
 use uuid::Uuid;
 
 use protocol::{ClientMsg, ServerMsg};
-
-use crate::miner::{MineRequest, MineRequestTarget};
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -98,7 +97,6 @@ fn main() {
     //  depuis le thread lecteur.
     // ─────────────────────────────────────────────────────────────────────
 
-    #[allow(unused_variables)]
     let shared_state = state::new_shared_state(agent_id);
     let mut miner_pool = miner::MinerPool::new();
     miner_pool.populate(NUM_MINERS);
@@ -109,49 +107,22 @@ fn main() {
             .expect("set_read_timeout");
     }
 
-    // TODO: Partie 3 — Créer la stratégie (voir strategy.rs)
-
-    // TODO: Partie 5 — Boucle principale
     loop {
-        // 1. Lire les messages du serveur (décodés par read_server_msg)
-        //    - State, PowResult → met à jour le SharedState (avec affichage dans state.rs)
-        //    - PowChallenge → envoyer au MinerPool
-        //    - Win → afficher et quitter
+        // On lit les messages du serveur
         let msg = read_server_msg(&mut ws);
         if let Some(msg) = msg {
-            // Mettre à jour l'état partagé (State, PowResult) — affichage dans state.rs
+            // On met à jour l'état partagé
             shared_state.lock().unwrap().update(&msg);
 
-            match msg {
-                ServerMsg::PowChallenge {
-                    tick,
-                    seed,
-                    resource_id,
-                    x: _,
-                    y: _,
-                    target_bits,
-                    expires_at: _,
-                    value: _,
-                } => {
-                    let mine_request: MineRequest = MineRequest {
-                        tick,
-                        seed,
-                        resource_id,
-                        target_bits,
-                        agent_id,
-                    };
-                    miner_pool.submit(MineRequestTarget {
-                        mine_request: mine_request,
-                        priority: 1,
-                        remaining_priority: 1,
-                        start_nonce: 0,
-                    });
-                }
-                ServerMsg::Win { team } => {
-                    println!("[!] Win reçu : {team}");
-                    break;
-                }
-                _ => {}
+            // Print if PowChallenge
+            if let ServerMsg::PowChallenge(challenge) = msg {
+                println!("PowChallenge: {:?}", challenge);
+                miner_pool.submit(challenge.clone(), agent_id);
+            }
+
+            else if let ServerMsg::Win { team } = msg {
+                println!("[!] Win reçu : {team}");
+                break;
             }
         }
 
@@ -176,7 +147,17 @@ type WsStream = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::
 /// Retourne `None` en cas de timeout (lecture non bloquante) — sans log.
 fn read_server_msg(ws: &mut WsStream) -> Option<ServerMsg> {
     match ws.read() {
-        Ok(Message::Text(text)) => serde_json::from_str(&text).ok(),
+        Ok(Message::Text(text)) => match serde_json::from_str(&text) {
+            Ok(msg) => Some(msg),
+            Err(e) => {
+                let preview: String = text.chars().take(200).collect();
+                eprintln!(
+                    "[!] Message non décodé : {} — JSON (extrait) : {:?}",
+                    e, preview
+                );
+                None
+            }
+        },
         Ok(_) => None,
         Err(e) => {
             // Ne pas afficher pour timeout/would_block (polling normal)

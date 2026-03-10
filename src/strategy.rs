@@ -62,3 +62,4 @@
 //
 // On peut changer de stratégie sans modifier le reste du code grâce au
 // dispatch dynamique (Box<dyn Strategy>).
+

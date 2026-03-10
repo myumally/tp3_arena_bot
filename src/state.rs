@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 #[allow(unused_imports)]
 use uuid::Uuid;
 
+use crate::protocol::PowChallenge;
 #[allow(unused_imports)]
 use crate::protocol::ServerMsg;
 
@@ -61,7 +62,8 @@ pub struct GameState {
     pub obstacles: Vec<(u16, u16)>,
     pub resources: Vec<ResourceInfo>,
     pub agents: Vec<AgentInfo>,
-    pub team_scores: HashMap<String, u32>
+    pub team_scores: HashMap<String, u32>,
+    pub pow_challenge: Vec<PowChallenge>,
 }
 
 // TODO: Implémenter GameState.
@@ -69,7 +71,7 @@ pub struct GameState {
 impl GameState {
     /// Crée un état initial avec l'agent_id reçu du serveur.
     pub fn new(agent_id: Uuid) -> Self {
-        GameState{
+        GameState {
             agent_id: agent_id,
             tick: 0,
             position: (0, 0),
@@ -78,7 +80,8 @@ impl GameState {
             obstacles: vec![],
             resources: vec![],
             agents: vec![],
-            team_scores: HashMap::new()
+            team_scores: HashMap::new(),
+            pow_challenge: vec![],
         }
     }
 
@@ -92,11 +95,22 @@ impl GameState {
     /// Les autres messages peuvent être ignorés ici.
     pub fn update(&mut self, msg: &ServerMsg) {
         match msg.clone() {
-            ServerMsg::State { tick, width, height, goal, obstacles, resources, agents } => {
+            // State
+            ServerMsg::State {
+                tick,
+                width,
+                height,
+                goal,
+                obstacles,
+                resources,
+                agents,
+            } => {
                 self.tick = tick;
                 self.map_size = (width, height);
                 self.goal = goal;
                 self.obstacles = obstacles.clone();
+
+                // Update resources
                 self.resources = resources
                     .into_iter()
                     .map(|r| ResourceInfo {
@@ -107,6 +121,8 @@ impl GameState {
                         value: r.4,
                     })
                     .collect();
+
+                // Update agents
                 self.agents = agents
                     .iter()
                     .filter(|a| a.0 != self.agent_id)
@@ -119,29 +135,50 @@ impl GameState {
                         y: a.5,
                     })
                     .collect();
+
+                // Update position
                 if let Some(me) = agents.iter().find(|a| a.0 == self.agent_id) {
                     self.position = (me.4, me.5);
                 }
-                println!(
-                    "[state] State tick={} pos=({},{}) map={}x{} resources={} agents={}",
-                    self.tick,
-                    self.position.0,
-                    self.position.1,
-                    self.map_size.0,
-                    self.map_size.1,
-                    self.resources.len(),
-                    self.agents.len()
-                );
-            } 
-            ServerMsg::PowResult { resource_id, winner } => {
+
+                // Filter pow_challenge to remove expired
+                self.pow_challenge.retain(|c| c.expires_at > tick);
+
+                // Print state every 20 ticks
+                if tick % 20 == 0 {
+                    println!(
+                        "[state] State tick={} pos=({},{}) map={}x{} resources={} agents={}",
+                        self.tick,
+                        self.position.0,
+                        self.position.1,
+                        self.map_size.0,
+                        self.map_size.1,
+                        self.resources.len(),
+                        self.agents.len()
+                    );
+                }
+            }
+
+            // PowResult
+            ServerMsg::PowResult {
+                resource_id,
+                winner,
+            } => {
                 self.resources.retain(|r| r.resource_id != resource_id);
-                println!("[state] PowResult resource={} winner={}", resource_id, winner);
-            }  
+                println!(
+                    "[state] PowResult resource={} winner={}",
+                    resource_id, winner
+                );
+            }
+
+            // PowChallenge
+            ServerMsg::PowChallenge(challenge) => {
+                self.pow_challenge.push(challenge.clone());
+            }
             _ => {}
-        }      
+        }
     }
 }
-
 
 // FAIT: Définir le type alias SharedState.
 //
